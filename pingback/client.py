@@ -126,8 +126,13 @@ class Pingback:
                 "durationMs": duration_ms,
             }
 
+    def register(self):
+        """Eagerly register functions with the platform. Call after all functions are defined."""
+        self._ensure_registered()
+
     def flask_handler(self):
         """Return a Flask view function."""
+        self._ensure_registered()
         def handler():
             from flask import request, jsonify
             result = self.handle(request.data, dict(request.headers))
@@ -137,6 +142,7 @@ class Pingback:
 
     def fastapi_handler(self):
         """Return a FastAPI endpoint."""
+        self._ensure_registered()
         async def handler(request):
             from fastapi.responses import JSONResponse
             body = await request.body()

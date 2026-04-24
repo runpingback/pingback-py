@@ -18,6 +18,7 @@ app = Flask(__name__)
 pb = Pingback(
     api_key=os.environ.get("PINGBACK_API_KEY", ""),
     cron_secret=os.environ.get("PINGBACK_CRON_SECRET", ""),
+    platform_url=os.environ.get("PINGBACK_PLATFORM_URL"),
     base_url=os.environ.get("BASE_URL"),
 )
 
