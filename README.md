@@ -56,8 +56,10 @@ app.post("/api/pingback")(pb.fastapi_handler())
 ### Django
 
 ```python
+# views.py
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
+from myapp.jobs import pb
 
 @csrf_exempt
 def pingback_handler(request):
@@ -66,11 +68,27 @@ def pingback_handler(request):
     return JsonResponse(result, status=status)
 ```
 
+Register on startup in your `AppConfig`:
+
+```python
+# apps.py
+from django.apps import AppConfig
+
+class MyAppConfig(AppConfig):
+    name = "myapp"
+
+    def ready(self):
+        from myapp.jobs import pb
+        pb.register()
+```
+
 ### Any Framework
 
 ```python
 result = pb.handle(body=request_body_bytes, headers=request_headers_dict)
 ```
+
+> **Registration:** `flask_handler()` and `fastapi_handler()` automatically register your functions with the platform on startup. For Django or other frameworks, call `pb.register()` after all functions are defined. Registration only runs once.
 
 ## Defining Functions
 
@@ -232,7 +250,7 @@ PINGBACK_CRON_SECRET=...            # From your Pingback project settings
 
 1. Define cron jobs and tasks with `@pb.cron()` and `@pb.task()` decorators
 2. Mount the handler using your framework's routing
-3. On the first request, the SDK registers your functions with the Pingback platform
+3. Functions are registered with the platform on startup (`flask_handler()` and `fastapi_handler()` do this automatically; for Django or other frameworks, call `pb.register()`)
 4. The platform sends signed HTTP requests to your handler when jobs are due
 5. The handler verifies the HMAC signature, executes the function, and returns results
-6. Fan-out tasks are dispatched independently by the platform
+6. Fan-out tasks and workflow chains are dispatched independently by the platform
