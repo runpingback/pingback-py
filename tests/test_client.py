@@ -128,6 +128,79 @@ class TestHandle(unittest.TestCase):
         self.assertEqual(result["result"], {"msg": "hello"})
 
 
+class TestTypedPayload(unittest.TestCase):
+    def _make_pb(self):
+        pb = Pingback("key", "secret")
+        pb._registered = True
+        return pb
+
+    def _body(self, func, payload=None):
+        d = {"function": func, "executionId": "exec-1", "attempt": 1, "scheduledAt": "2026-04-22T03:00:00Z"}
+        if payload is not None:
+            d["payload"] = payload
+        return json.dumps(d)
+
+    def test_no_payload_param(self):
+        """Handler with only ctx — ctx.payload still works."""
+        pb = self._make_pb()
+
+        @pb.task("job")
+        def job(ctx):
+            return ctx.payload
+
+        body = self._body("job", {"key": "value"})
+        result = pb.handle(body.encode(), signed_headers(body, "secret"))
+        self.assertEqual(result["result"], {"key": "value"})
+
+    def test_raw_dict_payload(self):
+        """Handler with second param, no annotation — gets raw dict."""
+        pb = self._make_pb()
+
+        @pb.task("job")
+        def job(ctx, payload):
+            return {"got": payload["key"]}
+
+        body = self._body("job", {"key": "hello"})
+        result = pb.handle(body.encode(), signed_headers(body, "secret"))
+        self.assertEqual(result["result"], {"got": "hello"})
+
+    def test_dataclass_payload(self):
+        """Handler with dataclass annotation — gets deserialized instance."""
+        import dataclasses
+
+        @dataclasses.dataclass
+        class EmailPayload:
+            to: str
+            subject: str
+
+        pb = self._make_pb()
+
+        @pb.task("send-email")
+        def send_email(ctx, payload: EmailPayload):
+            return {"to": payload.to, "subject": payload.subject}
+
+        body = self._body("send-email", {"to": "a@b.com", "subject": "Hi"})
+        result = pb.handle(body.encode(), signed_headers(body, "secret"))
+        self.assertEqual(result["result"], {"to": "a@b.com", "subject": "Hi"})
+
+    def test_typed_dict_payload(self):
+        """Handler with TypedDict annotation — gets raw dict (no deserialization)."""
+        from typing import TypedDict
+
+        class Msg(TypedDict):
+            text: str
+
+        pb = self._make_pb()
+
+        @pb.task("echo")
+        def echo(ctx, payload: Msg):
+            return {"text": payload["text"]}
+
+        body = self._body("echo", {"text": "hello"})
+        result = pb.handle(body.encode(), signed_headers(body, "secret"))
+        self.assertEqual(result["result"], {"text": "hello"})
+
+
 class TestTrigger(unittest.TestCase):
     def test_trigger_success(self):
         class Handler(BaseHTTPRequestHandler):

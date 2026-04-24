@@ -1,3 +1,5 @@
+import dataclasses
+import inspect
 import json
 import logging
 import threading
@@ -5,7 +7,7 @@ import time
 import urllib.request
 import urllib.error
 from datetime import datetime
-from typing import Optional
+from typing import Optional, get_type_hints
 
 from pingback.context import Context
 from pingback.hmac import verify_signature
@@ -14,6 +16,38 @@ from pingback.register import register as register_functions
 logger = logging.getLogger("pingback")
 
 DEFAULT_PLATFORM_URL = "https://api.pingback.lol"
+
+
+def _resolve_payload(handler, raw_payload):
+    """Inspect handler signature and deserialize payload if typed."""
+    sig = inspect.signature(handler)
+    params = list(sig.parameters.values())
+
+    # No second parameter — call with just ctx
+    if len(params) < 2:
+        return None, False
+
+    param = params[1]
+    # No type annotation — pass raw dict
+    hints = get_type_hints(handler) if hasattr(handler, '__annotations__') else {}
+    annotation = hints.get(param.name)
+    if annotation is None:
+        return raw_payload, True
+
+    # Pydantic model
+    try:
+        from pydantic import BaseModel
+        if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+            return annotation(**(raw_payload or {})), True
+    except ImportError:
+        pass
+
+    # Dataclass
+    if dataclasses.is_dataclass(annotation) and isinstance(annotation, type):
+        return annotation(**(raw_payload or {})), True
+
+    # Any other type — pass raw
+    return raw_payload, True
 
 
 class Pingback:
@@ -103,9 +137,12 @@ class Pingback:
             payload=data.get("payload"),
         )
 
+        handler = fn_def["handler"]
+        payload, has_payload_param = _resolve_payload(handler, data.get("payload"))
+
         start = time.time()
         try:
-            result = fn_def["handler"](ctx)
+            result = handler(ctx, payload) if has_payload_param else handler(ctx)
             duration_ms = int((time.time() - start) * 1000)
             return {
                 "_status": 200,
