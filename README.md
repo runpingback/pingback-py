@@ -95,6 +95,50 @@ def process_upload(ctx):
     return result
 ```
 
+### Typed Payloads
+
+Task handlers can accept a typed second parameter for autocomplete, validation, and self-documenting code. Works with dataclasses and Pydantic models:
+
+```python
+from dataclasses import dataclass
+
+@dataclass
+class EmailPayload:
+    to: str
+    subject: str
+    priority: int = 1
+
+@pb.task("send-email", retries=3)
+def send_email(ctx, payload: EmailPayload):
+    # payload.to, payload.subject — full autocomplete
+    send_mail(payload.to, payload.subject)
+    ctx.log("Sent", to=payload.to, priority=payload.priority)
+```
+
+With Pydantic (`pip install pydantic`):
+
+```python
+from pydantic import BaseModel
+
+class OrderPayload(BaseModel):
+    order_id: str
+    amount: float
+    email: str
+
+@pb.task("process-order")
+def process_order(ctx, payload: OrderPayload):
+    # validated, with defaults and type coercion
+    ctx.log("Processing", order_id=payload.order_id)
+```
+
+All three styles are supported:
+
+| Style | Signature | Payload access |
+|-------|-----------|----------------|
+| No param | `def job(ctx)` | `ctx.payload["key"]` |
+| Raw dict | `def job(ctx, payload)` | `payload["key"]` |
+| Typed | `def job(ctx, payload: MyType)` | `payload.key` |
+
 ### Fan-Out
 
 ```python
@@ -102,7 +146,7 @@ def process_upload(ctx):
 def send_emails(ctx):
     pending = get_pending_emails()
     for email in pending:
-        ctx.task("send-email", {"id": email.id})
+        ctx.task("send-email", {"to": email.recipient, "subject": email.subject})
     ctx.log("Dispatched emails", count=len(pending))
     return {"dispatched": len(pending)}
 ```
@@ -112,27 +156,32 @@ def send_emails(ctx):
 Tasks can call `ctx.task()` to chain into multi-step workflows with branching:
 
 ```python
-@pb.task("validate-order", retries=2)
-def validate_order(ctx):
-    order = ctx.payload
-    ctx.log("Validating", order_id=order["order_id"])
+@dataclass
+class Order:
+    order_id: str
+    amount: float
+    email: str
 
-    if order["amount"] <= 0:
-        ctx.task("notify-failure", {"order_id": order["order_id"], "reason": "Invalid amount"})
+@pb.task("validate-order", retries=2)
+def validate_order(ctx, order: Order):
+    ctx.log("Validating", order_id=order.order_id)
+
+    if order.amount <= 0:
+        ctx.task("notify-failure", {"order_id": order.order_id, "reason": "Invalid amount"})
         return {"valid": False}
 
-    ctx.task("charge-payment", order)
+    ctx.task("charge-payment", {"order_id": order.order_id, "amount": order.amount, "email": order.email})
     return {"valid": True}
 
 @pb.task("charge-payment", retries=3)
-def charge_payment(ctx):
-    charge = stripe.Charge.create(amount=ctx.payload["amount"] * 100)
+def charge_payment(ctx, payload: Order):
+    charge = stripe.Charge.create(amount=int(payload.amount * 100))
     ctx.log("Charged", charge_id=charge.id)
-    ctx.task("send-confirmation", ctx.payload)
+    ctx.task("send-confirmation", {"email": payload.email, "order_id": payload.order_id})
 
 @pb.task("send-confirmation", retries=2)
-def send_confirmation(ctx):
-    send_email(ctx.payload["email"], "Order confirmed")
+def send_confirmation(ctx, payload):
+    send_email(payload["email"], "Order confirmed")
     ctx.log("Confirmation sent")
 ```
 
