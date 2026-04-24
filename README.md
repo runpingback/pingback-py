@@ -107,6 +107,37 @@ def send_emails(ctx):
     return {"dispatched": len(pending)}
 ```
 
+### Workflows (Task Chaining)
+
+Tasks can call `ctx.task()` to chain into multi-step workflows with branching:
+
+```python
+@pb.task("validate-order", retries=2)
+def validate_order(ctx):
+    order = ctx.payload
+    ctx.log("Validating", order_id=order["order_id"])
+
+    if order["amount"] <= 0:
+        ctx.task("notify-failure", {"order_id": order["order_id"], "reason": "Invalid amount"})
+        return {"valid": False}
+
+    ctx.task("charge-payment", order)
+    return {"valid": True}
+
+@pb.task("charge-payment", retries=3)
+def charge_payment(ctx):
+    charge = stripe.Charge.create(amount=ctx.payload["amount"] * 100)
+    ctx.log("Charged", charge_id=charge.id)
+    ctx.task("send-confirmation", ctx.payload)
+
+@pb.task("send-confirmation", retries=2)
+def send_confirmation(ctx):
+    send_email(ctx.payload["email"], "Order confirmed")
+    ctx.log("Confirmation sent")
+```
+
+Each step runs as its own execution with independent retries and logging. The workflow graph in your dashboard visualizes the full chain.
+
 ## Programmatic Triggering
 
 ```python
