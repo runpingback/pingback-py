@@ -54,11 +54,11 @@ class Pingback:
     """Pingback SDK client."""
 
     def __init__(
-        self,
-        api_key: str,
-        cron_secret: str,
-        platform_url: Optional[str] = None,
-        base_url: Optional[str] = None,
+            self,
+            api_key: str,
+            cron_secret: str,
+            platform_url: Optional[str] = None,
+            base_url: Optional[str] = None,
     ):
         self.api_key = api_key
         self.cron_secret = cron_secret
@@ -70,6 +70,7 @@ class Pingback:
 
     def cron(self, name: str, schedule: str, retries: int = 0, timeout: Optional[str] = None, concurrency: int = 1):
         """Decorator to register a cron job."""
+
         def decorator(fn):
             self._functions[name] = {
                 "type": "cron",
@@ -80,20 +81,38 @@ class Pingback:
                 "concurrency": concurrency,
             }
             return fn
+
         return decorator
 
-    def task(self, name: str, retries: int = 0, timeout: Optional[str] = None, concurrency: int = 1):
+    def task(self, name: str, retries: int = 0, timeout: Optional[str] = None, concurrency: int = 1,
+             unpack_payload=True):
         """Decorator to register a background task."""
+
         def decorator(fn):
+            handler = fn
+            if unpack_payload:
+                sig = inspect.signature(fn)
+                params = list(sig.parameters.values())
+                extra = [p for p in params if p.name != 'ctx']
+                needs_unpack = len(extra) > 1 or (len(extra) == 1 and extra[0].name != 'payload')
+                has_ctx = any(p.name == 'ctx' for p in params)
+
+                if needs_unpack:
+                    def handler(ctx):
+                        if has_ctx:
+                            return fn(ctx, **(ctx.payload or {}))
+                        return fn(**(ctx.payload or {}))
+
             self._functions[name] = {
                 "type": "task",
                 "schedule": None,
-                "handler": fn,
+                "handler": handler,
                 "retries": retries,
                 "timeout": timeout,
                 "concurrency": concurrency,
             }
             return fn
+
         return decorator
 
     def _ensure_registered(self):
@@ -170,22 +189,26 @@ class Pingback:
     def flask_handler(self):
         """Return a Flask view function."""
         self._ensure_registered()
+
         def handler():
             from flask import request, jsonify
             result = self.handle(request.data, dict(request.headers))
             status = result.pop("_status", 200)
             return jsonify(result), status
+
         return handler
 
     def fastapi_handler(self):
         """Return a FastAPI endpoint."""
         self._ensure_registered()
+
         async def handler(request):
             from fastapi.responses import JSONResponse
             body = await request.body()
             result = self.handle(body, dict(request.headers))
             status = result.pop("_status", 200)
             return JSONResponse(result, status_code=status)
+
         return handler
 
     def trigger(self, task_name: str, payload=None) -> str:

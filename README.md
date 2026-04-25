@@ -56,16 +56,41 @@ app.post("/api/pingback")(pb.fastapi_handler())
 ### Django
 
 ```python
+# settings.py
+from pingback import Pingback
+
+pb = Pingback(
+    api_key="pb_live_...",
+    cron_secret="...",
+    platform_url="https://api.pingback.lol",  # default
+    base_url="https://myapp.com",              # your app's public URL
+)
+
+```
+
+```python
 # views.py
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
-from myapp.jobs import pb
+from myproject.settings import pb
 
 @csrf_exempt
 def pingback_handler(request):
     result = pb.handle(request.body, dict(request.headers))
     status = result.pop("_status", 200)
     return JsonResponse(result, status=status)
+```
+
+Register your url:
+
+```python
+# urls.py
+from django.urls import path
+from myapp.views import pingback_handler
+
+urlpatterns = [
+    path("api/pingback", pingback_handler),
+]
 ```
 
 Register on startup in your `AppConfig`:
@@ -78,7 +103,7 @@ class MyAppConfig(AppConfig):
     name = "myapp"
 
     def ready(self):
-        from myapp.jobs import pb
+        from myprojct.settings import pb 
         pb.register()
 ```
 
@@ -149,13 +174,34 @@ def process_order(ctx, payload: OrderPayload):
     ctx.log("Processing", order_id=payload.order_id)
 ```
 
-All three styles are supported:
+### Unpacked Kwargs
+
+Task handlers can receive payload fields directly as keyword arguments — no need to extract from a `payload` object:
+
+```python
+@pb.task("send-password-reset", retries=3)
+def send_password_reset(ctx, otp_code: str, user_email: list[str]):
+    message = f"Your OTP is {otp_code}."
+    send_mail(message=message, recipient_list=user_email)
+    ctx.log("Sent reset email", to=user_email)
+```
+
+Triggered with:
+
+```python
+pb.trigger("send-password-reset", {"otp_code": "482910", "user_email": ["user@example.com"]})
+```
+
+This activates automatically when `unpack_payload=True` (the default) and the handler has **more than one parameter beyond `ctx`**, or a **single extra parameter not named `payload`**. The SDK unpacks `ctx.payload` as keyword arguments into the function. Set `unpack_payload=False` to disable this and use the raw dict or typed payload styles instead.
+
+All four styles are supported:
 
 | Style | Signature | Payload access |
 |-------|-----------|----------------|
 | No param | `def job(ctx)` | `ctx.payload["key"]` |
 | Raw dict | `def job(ctx, payload)` | `payload["key"]` |
 | Typed | `def job(ctx, payload: MyType)` | `payload.key` |
+| Unpacked kwargs | `def job(ctx, field1, field2)` | `field1`, `field2` directly |
 
 ### Fan-Out
 
@@ -236,8 +282,10 @@ pb = Pingback(
 
 ```python
 @pb.cron("job", "* * * * *", retries=3, timeout="30s", concurrency=5)
-@pb.task("job", retries=3, timeout="30s", concurrency=5)
+@pb.task("job", retries=3, timeout="30s", concurrency=5, unpack_payload=True)
 ```
+
+`unpack_payload` (default `True`) — when the handler has multiple parameters beyond `ctx`, or a single extra parameter not named `payload`, the SDK unpacks `ctx.payload` as keyword arguments. Set to `False` to always use the raw dict / typed payload styles.
 
 ## Environment Variables
 
