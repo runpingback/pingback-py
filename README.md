@@ -56,16 +56,41 @@ app.post("/api/pingback")(pb.fastapi_handler())
 ### Django
 
 ```python
+# settings.py
+from pingback import Pingback
+
+pb = Pingback(
+    api_key="pb_live_...",
+    cron_secret="...",
+    platform_url="https://api.pingback.lol",  # default
+    base_url="https://myapp.com",              # your app's public URL
+)
+
+```
+
+```python
 # views.py
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
-from myapp.jobs import pb
+from myproject.settings import pb
 
 @csrf_exempt
 def pingback_handler(request):
     result = pb.handle(request.body, dict(request.headers))
     status = result.pop("_status", 200)
     return JsonResponse(result, status=status)
+```
+
+Register your url:
+
+```python
+# urls.py
+from django.urls import path
+from myapp.views import pingback_handler
+
+urlpatterns = [
+    path("api/pingback", pingback_handler),
+]
 ```
 
 Register on startup in your `AppConfig`:
@@ -78,7 +103,7 @@ class MyAppConfig(AppConfig):
     name = "myapp"
 
     def ready(self):
-        from myapp.jobs import pb
+        from myprojct.settings import pb 
         pb.register()
 ```
 
