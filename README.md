@@ -174,13 +174,34 @@ def process_order(ctx, payload: OrderPayload):
     ctx.log("Processing", order_id=payload.order_id)
 ```
 
-All three styles are supported:
+### Unpacked Kwargs
+
+Task handlers can receive payload fields directly as keyword arguments — no need to extract from a `payload` object:
+
+```python
+@pb.task("send-password-reset", retries=3)
+def send_password_reset(ctx, otp_code: str, user_email: list[str]):
+    message = f"Your OTP is {otp_code}."
+    send_mail(message=message, recipient_list=user_email)
+    ctx.log("Sent reset email", to=user_email)
+```
+
+Triggered with:
+
+```python
+pb.trigger("send-password-reset", {"otp_code": "482910", "user_email": ["user@example.com"]})
+```
+
+This activates automatically when `unpack_payload=True` (the default) and the handler has **more than one parameter beyond `ctx`**, or a **single extra parameter not named `payload`**. The SDK unpacks `ctx.payload` as keyword arguments into the function. Set `unpack_payload=False` to disable this and use the raw dict or typed payload styles instead.
+
+All four styles are supported:
 
 | Style | Signature | Payload access |
 |-------|-----------|----------------|
 | No param | `def job(ctx)` | `ctx.payload["key"]` |
 | Raw dict | `def job(ctx, payload)` | `payload["key"]` |
 | Typed | `def job(ctx, payload: MyType)` | `payload.key` |
+| Unpacked kwargs | `def job(ctx, field1, field2)` | `field1`, `field2` directly |
 
 ### Fan-Out
 
@@ -261,8 +282,10 @@ pb = Pingback(
 
 ```python
 @pb.cron("job", "* * * * *", retries=3, timeout="30s", concurrency=5)
-@pb.task("job", retries=3, timeout="30s", concurrency=5)
+@pb.task("job", retries=3, timeout="30s", concurrency=5, unpack_payload=True)
 ```
+
+`unpack_payload` (default `True`) — when the handler has multiple parameters beyond `ctx`, or a single extra parameter not named `payload`, the SDK unpacks `ctx.payload` as keyword arguments. Set to `False` to always use the raw dict / typed payload styles.
 
 ## Environment Variables
 
