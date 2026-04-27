@@ -297,7 +297,15 @@ visualizes the full chain.
 
 ```python
 exec_id = pb.trigger("send-email", {"to": "user@example.com"})
+
+# With a delay — run 15 minutes from now
+exec_id = pb.trigger("send-email", {"to": "user@example.com"}, delay="15m")
+
+# Delay as seconds
+exec_id = pb.trigger("send-email", {"to": "user@example.com"}, delay=900)
 ```
+
+Supported delay formats: integer (seconds), or a string like `"30s"`, `"15m"`, `"2h"`, `"1d"`, `"1d2h30m"`. Maximum delay: 30 days.
 
 ## Structured Logging
 

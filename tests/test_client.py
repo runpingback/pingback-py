@@ -331,5 +331,93 @@ class TestRegister(unittest.TestCase):
         self.assertEqual(len(requests_received[1]["functions"]), 2)
 
 
+class TestTriggerWithDelay(unittest.TestCase):
+    def test_trigger_passes_delay(self):
+        received = {}
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(self):
+                received["body"] = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                self.send_response(201)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({
+                    "executionId": "exec-456",
+                    "task": "send-email",
+                    "scheduledAt": "2026-04-27T15:15:00.000Z",
+                }).encode())
+            def log_message(self, format, *args):
+                pass
+
+        server = HTTPServer(("127.0.0.1", 0), Handler)
+        port = server.server_address[1]
+        t = Thread(target=server.handle_request)
+        t.start()
+
+        pb = Pingback("test-key", "secret", platform_url=f"http://127.0.0.1:{port}")
+        exec_id = pb.trigger("send-email", {"to": "a@b.com"}, delay="15m")
+        self.assertEqual(exec_id, "exec-456")
+        self.assertEqual(received["body"]["delay"], "15m")
+        t.join(timeout=2)
+        server.server_close()
+
+    def test_trigger_passes_integer_delay(self):
+        received = {}
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(self):
+                received["body"] = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                self.send_response(201)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({
+                    "executionId": "exec-789",
+                    "task": "process",
+                    "scheduledAt": "2026-04-27T15:15:00.000Z",
+                }).encode())
+            def log_message(self, format, *args):
+                pass
+
+        server = HTTPServer(("127.0.0.1", 0), Handler)
+        port = server.server_address[1]
+        t = Thread(target=server.handle_request)
+        t.start()
+
+        pb = Pingback("test-key", "secret", platform_url=f"http://127.0.0.1:{port}")
+        exec_id = pb.trigger("process", delay=900)
+        self.assertEqual(exec_id, "exec-789")
+        self.assertEqual(received["body"]["delay"], 900)
+        self.assertNotIn("payload", received["body"])
+        t.join(timeout=2)
+        server.server_close()
+
+    def test_trigger_without_delay_omits_field(self):
+        received = {}
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(self):
+                received["body"] = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                self.send_response(201)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({
+                    "executionId": "exec-000",
+                    "task": "quick",
+                }).encode())
+            def log_message(self, format, *args):
+                pass
+
+        server = HTTPServer(("127.0.0.1", 0), Handler)
+        port = server.server_address[1]
+        t = Thread(target=server.handle_request)
+        t.start()
+
+        pb = Pingback("test-key", "secret", platform_url=f"http://127.0.0.1:{port}")
+        pb.trigger("quick")
+        self.assertNotIn("delay", received["body"])
+        t.join(timeout=2)
+        server.server_close()
+
+
 if __name__ == "__main__":
     unittest.main()
