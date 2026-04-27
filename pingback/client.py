@@ -211,9 +211,21 @@ class Pingback:
 
         return handler
 
-    def trigger(self, task_name: str, payload=None) -> str:
-        """Trigger a task programmatically. Returns execution_id."""
-        data = json.dumps({"task": task_name, "payload": payload}).encode()
+    def trigger(self, task_name: str, payload=None, delay=None) -> str:
+        """Trigger a task programmatically. Returns execution_id.
+
+        Args:
+            task_name: Name of the registered task to trigger.
+            payload: Optional data to pass to the task.
+            delay: Optional delay before execution. Integer (seconds) or string ("15m", "2h30m").
+        """
+        body = {"task": task_name}
+        if payload is not None:
+            body["payload"] = payload
+        if delay is not None:
+            body["delay"] = delay
+
+        data = json.dumps(body).encode()
         url = f"{self.platform_url}/api/v1/trigger"
 
         req = urllib.request.Request(
@@ -231,5 +243,5 @@ class Pingback:
                 result = json.loads(resp.read())
                 return result["executionId"]
         except urllib.error.HTTPError as e:
-            body = e.read().decode()
-            raise RuntimeError(f"Trigger failed ({e.code}): {body}")
+            error_body = e.read().decode()
+            raise RuntimeError(f"Trigger failed ({e.code}): {error_body}")
