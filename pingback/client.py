@@ -243,5 +243,5 @@ class Pingback:
                 result = json.loads(resp.read())
                 return result["executionId"]
         except urllib.error.HTTPError as e:
-            body = e.read().decode()
-            raise RuntimeError(f"Trigger failed ({e.code}): {body}")
+            error_body = e.read().decode()
+            raise RuntimeError(f"Trigger failed ({e.code}): {error_body}")
