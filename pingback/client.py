@@ -184,7 +184,13 @@ class Pingback:
 
     def register(self):
         """Eagerly register functions with the platform. Call after all functions are defined."""
-        self._ensure_registered()
+        with self._register_lock:
+            self._registered = True
+            if self.api_key:
+                try:
+                    register_functions(self._functions, self.api_key, self.platform_url, self.base_url)
+                except Exception as e:
+                    logger.error(f"[pingback] Registration failed: {e}")
 
     def flask_handler(self):
         """Return a Flask view function."""
