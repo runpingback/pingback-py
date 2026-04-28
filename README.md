@@ -19,11 +19,13 @@ pb = Pingback(
     cron_secret=os.environ["PINGBACK_CRON_SECRET"],
 )
 
+
 @pb.cron("cleanup", "0 3 * * *", retries=2, timeout="60s")
 def cleanup(ctx):
     removed = remove_expired_sessions()
     ctx.log("Removed sessions", count=removed)
     return {"removed": removed}
+
 
 @pb.task("send-email", retries=3, timeout="15s")
 def send_email(ctx):
@@ -63,7 +65,7 @@ pb = Pingback(
     api_key="pb_live_...",
     cron_secret="...",
     platform_url="https://api.pingback.lol",  # default
-    base_url="https://myapp.com",              # your app's public URL
+    base_url="https://myapp.com",  # your app's public URL
 )
 
 ```
@@ -73,6 +75,7 @@ pb = Pingback(
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from myproject.settings import pb
+
 
 @csrf_exempt
 def pingback_handler(request):
@@ -93,19 +96,45 @@ urlpatterns = [
 ]
 ```
 
-Register on startup in your `AppConfig`:
+Put your jobs in a `jobs.py` file inside each app, then register everything from one central `AppConfig` (listed last in
+`INSTALLED_APPS`):
 
 ```python
-# apps.py
+# billing/jobs.py  — just decorate, no register() call needed here
+from myproject.settings import pb
+
+
+@pb.cron("monthly-invoice", "0 9 1 * *")
+def monthly_invoice(ctx):
+    ...
+
+
+@pb.task("charge-card")
+def charge_card(ctx):
+    ...
+```
+
+```python
+# myproject/apps.py  — one registration point for the whole project
 from django.apps import AppConfig
 
-class MyAppConfig(AppConfig):
-    name = "myapp"
+
+class MyProjectConfig(AppConfig):
+    name = "myproject"
 
     def ready(self):
-        from myprojct.settings import pb 
-        pb.register()
+        from django.utils.module_loading import autodiscover_modules
+        from myproject.settings import pb
+
+        autodiscover_modules(
+            "tasks")  # auto-imports tasks.py (when using jobs.py -- autodiscover_modules("jobs") from every installed app 
+        pb.register()  # called once after all decorators have run
 ```
+
+Adding a new job only requires editing (or creating) the relevant app's `tasks.py` or `jobs.py` — no `apps.py` changes,
+no extra `pb.register()` calls.
+
+##### NB: Where tasks/jobs is a package, be sure to include all tasks/jobs in the package's __init__.py
 
 ### Any Framework
 
@@ -113,7 +142,9 @@ class MyAppConfig(AppConfig):
 result = pb.handle(body=request_body_bytes, headers=request_headers_dict)
 ```
 
-> **Registration:** `flask_handler()` and `fastapi_handler()` automatically register your functions with the platform on startup. For Django or other frameworks, call `pb.register()` after all functions are defined. Registration only runs once.
+> **Registration:** `flask_handler()` and `fastapi_handler()` automatically register your functions with the platform on
+> startup. For Django, use the `autodiscover_modules` pattern above to register once after all apps are loaded.
+`pb.register()` always sends the current set of functions to the platform.
 
 ## Defining Functions
 
@@ -140,16 +171,19 @@ def process_upload(ctx):
 
 ### Typed Payloads
 
-Task handlers can accept a typed second parameter for autocomplete, validation, and self-documenting code. Works with dataclasses and Pydantic models:
+Task handlers can accept a typed second parameter for autocomplete, validation, and self-documenting code. Works with
+dataclasses and Pydantic models:
 
 ```python
 from dataclasses import dataclass
+
 
 @dataclass
 class EmailPayload:
     to: str
     subject: str
     priority: int = 1
+
 
 @pb.task("send-email", retries=3)
 def send_email(ctx, payload: EmailPayload):
@@ -163,10 +197,12 @@ With Pydantic (`pip install pydantic`):
 ```python
 from pydantic import BaseModel
 
+
 class OrderPayload(BaseModel):
     order_id: str
     amount: float
     email: str
+
 
 @pb.task("process-order")
 def process_order(ctx, payload: OrderPayload):
@@ -192,16 +228,18 @@ Triggered with:
 pb.trigger("send-password-reset", {"otp_code": "482910", "user_email": ["user@example.com"]})
 ```
 
-This activates automatically when `unpack_payload=True` (the default) and the handler has **more than one parameter beyond `ctx`**, or a **single extra parameter not named `payload`**. The SDK unpacks `ctx.payload` as keyword arguments into the function. Set `unpack_payload=False` to disable this and use the raw dict or typed payload styles instead.
+This activates automatically when `unpack_payload=True` (the default) and the handler has **more than one parameter
+beyond `ctx`**, or a **single extra parameter not named `payload`**. The SDK unpacks `ctx.payload` as keyword arguments
+into the function. Set `unpack_payload=False` to disable this and use the raw dict or typed payload styles instead.
 
 All four styles are supported:
 
-| Style | Signature | Payload access |
-|-------|-----------|----------------|
-| No param | `def job(ctx)` | `ctx.payload["key"]` |
-| Raw dict | `def job(ctx, payload)` | `payload["key"]` |
-| Typed | `def job(ctx, payload: MyType)` | `payload.key` |
-| Unpacked kwargs | `def job(ctx, field1, field2)` | `field1`, `field2` directly |
+| Style           | Signature                       | Payload access              |
+|-----------------|---------------------------------|-----------------------------|
+| No param        | `def job(ctx)`                  | `ctx.payload["key"]`        |
+| Raw dict        | `def job(ctx, payload)`         | `payload["key"]`            |
+| Typed           | `def job(ctx, payload: MyType)` | `payload.key`               |
+| Unpacked kwargs | `def job(ctx, field1, field2)`  | `field1`, `field2` directly |
 
 ### Fan-Out
 
@@ -226,6 +264,7 @@ class Order:
     amount: float
     email: str
 
+
 @pb.task("validate-order", retries=2)
 def validate_order(ctx, order: Order):
     ctx.log("Validating", order_id=order.order_id)
@@ -237,11 +276,13 @@ def validate_order(ctx, order: Order):
     ctx.task("charge-payment", {"order_id": order.order_id, "amount": order.amount, "email": order.email})
     return {"valid": True}
 
+
 @pb.task("charge-payment", retries=3)
 def charge_payment(ctx, payload: Order):
     charge = stripe.Charge.create(amount=int(payload.amount * 100))
     ctx.log("Charged", charge_id=charge.id)
     ctx.task("send-confirmation", {"email": payload.email, "order_id": payload.order_id})
+
 
 @pb.task("send-confirmation", retries=2)
 def send_confirmation(ctx, payload):
@@ -249,7 +290,8 @@ def send_confirmation(ctx, payload):
     ctx.log("Confirmation sent")
 ```
 
-Each step runs as its own execution with independent retries and logging. The workflow graph in your dashboard visualizes the full chain.
+Each step runs as its own execution with independent retries and logging. The workflow graph in your dashboard
+visualizes the full chain.
 
 ## Programmatic Triggering
 
@@ -268,11 +310,11 @@ Supported delay formats: integer (seconds), or a string like `"30s"`, `"15m"`, `
 ## Structured Logging
 
 ```python
-ctx.log("message")                         # info
-ctx.log("message", key="value")            # info with metadata
-ctx.warn("slow query", ms=2500)            # warning
-ctx.error("failed", code="E001")           # error
-ctx.debug("cache stats", hits=847)         # debug
+ctx.log("message")  # info
+ctx.log("message", key="value")  # info with metadata
+ctx.warn("slow query", ms=2500)  # warning
+ctx.error("failed", code="E001")  # error
+ctx.debug("cache stats", hits=847)  # debug
 ```
 
 ## Configuration
@@ -282,7 +324,7 @@ pb = Pingback(
     api_key="pb_live_...",
     cron_secret="...",
     platform_url="https://api.pingback.lol",  # default
-    base_url="https://myapp.com",              # your app's public URL
+    base_url="https://myapp.com",  # your app's public URL
 )
 ```
 
@@ -293,7 +335,9 @@ pb = Pingback(
 @pb.task("job", retries=3, timeout="30s", concurrency=5, unpack_payload=True)
 ```
 
-`unpack_payload` (default `True`) — when the handler has multiple parameters beyond `ctx`, or a single extra parameter not named `payload`, the SDK unpacks `ctx.payload` as keyword arguments. Set to `False` to always use the raw dict / typed payload styles.
+`unpack_payload` (default `True`) — when the handler has multiple parameters beyond `ctx`, or a single extra parameter
+not named `payload`, the SDK unpacks `ctx.payload` as keyword arguments. Set to `False` to always use the raw dict /
+typed payload styles.
 
 ## Environment Variables
 
@@ -306,7 +350,8 @@ PINGBACK_CRON_SECRET=...            # From your Pingback project settings
 
 1. Define cron jobs and tasks with `@pb.cron()` and `@pb.task()` decorators
 2. Mount the handler using your framework's routing
-3. Functions are registered with the platform on startup (`flask_handler()` and `fastapi_handler()` do this automatically; for Django or other frameworks, call `pb.register()`)
+3. Functions are registered with the platform on startup (`flask_handler()` and `fastapi_handler()` do this
+   automatically; for Django or other frameworks, call `pb.register()`)
 4. The platform sends signed HTTP requests to your handler when jobs are due
 5. The handler verifies the HMAC signature, executes the function, and returns results
 6. Fan-out tasks and workflow chains are dispatched independently by the platform

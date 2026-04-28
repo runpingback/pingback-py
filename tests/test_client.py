@@ -277,12 +277,58 @@ class TestRegister(unittest.TestCase):
         def send_email(ctx):
             pass
 
-        pb._ensure_registered()
+        pb.register()
         t.join(timeout=2)
         server.server_close()
 
         self.assertEqual(received["auth"], "Bearer test-key")
         self.assertEqual(len(received["body"]["functions"]), 2)
+
+    def test_register_always_fires(self):
+        """Second pb.register() call (after adding more functions) still reaches the platform."""
+        requests_received = []
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(self):
+                body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                requests_received.append(body)
+                self.send_response(201)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps({}).encode())
+            def log_message(self, format, *args):
+                pass
+
+        server = HTTPServer(("127.0.0.1", 0), Handler)
+        port = server.server_address[1]
+
+        # Handle two requests
+        t1 = Thread(target=server.handle_request)
+        t2 = Thread(target=server.handle_request)
+        t1.start()
+        t2.start()
+
+        pb = Pingback("test-key", "secret", platform_url=f"http://127.0.0.1:{port}")
+
+        @pb.cron("cleanup", "0 3 * * *")
+        def cleanup(ctx):
+            pass
+
+        pb.register()  # first call — one function
+
+        @pb.task("send-email")
+        def send_email(ctx):
+            pass
+
+        pb.register()  # second call — must fire with both functions
+
+        t1.join(timeout=2)
+        t2.join(timeout=2)
+        server.server_close()
+
+        self.assertEqual(len(requests_received), 2)
+        self.assertEqual(len(requests_received[0]["functions"]), 1)
+        self.assertEqual(len(requests_received[1]["functions"]), 2)
 
 
 class TestTriggerWithDelay(unittest.TestCase):
